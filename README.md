@@ -168,11 +168,7 @@ departments
 | ------------------- | ------------------- |
 | `ankit12@gmail.com` | `ankit12@gmail.com` |
 
-### Admin Account
 
-| Email                  | Password               |
-| ---------------------- | ---------------------- |
-| `admin12345@gmail.com` | `admin12345@gmail.com` |
 
 > These accounts are provided for testing and demonstration purposes only.
 
