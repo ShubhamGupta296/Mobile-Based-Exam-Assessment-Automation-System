@@ -6,6 +6,7 @@ import '../models/student_model.dart';
 import '../services/auth_service.dart';
 import '../services/erp_service.dart';
 import '../services/firestore_service.dart';
+import '../widgets/logout_button.dart';
 
 class StudentDashboardScreen extends StatefulWidget {
   const StudentDashboardScreen({super.key});
@@ -103,7 +104,10 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Student Dashboard')),
+      appBar: AppBar(
+        title: const Text('Student Dashboard'),
+        actions: const [LogoutButton()],
+      ),
       body: _buildBody(),
     );
   }

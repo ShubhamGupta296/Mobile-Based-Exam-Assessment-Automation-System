@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/auth_service.dart';
 import '../services/firestore_service.dart';
+import '../widgets/auth_validators.dart';
 import '../admin/admin_dashboard_screen.dart';
 import '../teacher/teacher_dashboard_screen.dart';
 import '../student/student_dashboard_screen.dart';
@@ -21,6 +22,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   bool _isLoading = false;
   bool _isCleaning = false;
+  bool _obscurePassword = true;
   String? _error;
 
   final _authService = AuthService();
@@ -41,7 +43,7 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       // 1) Sign in with Firebase Auth
       final credential = await _authService.loginWithEmailPassword(
-        email: _emailCtrl.text.trim(),
+        email: _emailCtrl.text.trim().toLowerCase(),
         password: _passwordCtrl.text,
       );
 
@@ -151,24 +153,31 @@ class _LoginScreenState extends State<LoginScreen> {
                     keyboardType: TextInputType.emailAddress,
                     textInputAction: TextInputAction.next,
                     decoration: const InputDecoration(
-                      labelText: 'Email',
+                      labelText: 'Email (@gmail.com only)',
                       border: OutlineInputBorder(),
                     ),
-                    validator: (v) {
-                      final value = (v ?? '').trim();
-                      if (value.isEmpty) return 'Enter email';
-                      if (!value.contains('@')) return 'Enter valid email';
-                      return null;
-                    },
+                    validator: AuthValidators.validateGmailEmail,
                   ),
                   const SizedBox(height: 12),
                   TextFormField(
                     controller: _passwordCtrl,
-                    obscureText: true,
+                    obscureText: _obscurePassword,
                     textInputAction: TextInputAction.done,
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                       labelText: 'Password',
-                      border: OutlineInputBorder(),
+                      border: const OutlineInputBorder(),
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          _obscurePassword
+                              ? Icons.visibility_off
+                              : Icons.visibility,
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            _obscurePassword = !_obscurePassword;
+                          });
+                        },
+                      ),
                     ),
                     validator: (v) {
                       final value = v ?? '';

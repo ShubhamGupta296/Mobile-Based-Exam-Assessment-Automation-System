@@ -6,6 +6,7 @@ import '../models/student_model.dart';
 import '../models/subject_model.dart';
 import '../services/firestore_service.dart';
 import '../services/subject_assignment_service.dart';
+import '../widgets/logout_button.dart';
 import 'admin_analytics_screen.dart';
 
 class AdminDashboardScreen extends StatefulWidget {
@@ -138,6 +139,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
         ),
         actions: [
           IconButton(icon: const Icon(Icons.refresh), onPressed: _loadAll),
+          const LogoutButton(),
         ],
       ),
       body: _loading

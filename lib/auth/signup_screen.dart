@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/student_model.dart';
+import '../widgets/auth_validators.dart';
 import 'login_screen.dart';
 
 class SignupScreen extends StatefulWidget {
@@ -23,6 +24,7 @@ class _SignupScreenState extends State<SignupScreen> {
   int _studentSemester = 1;
   int _batch = DateTime.now().year;
   bool _isLoading = false;
+  bool _obscurePassword = true;
   String? _error;
 
   @override
@@ -45,13 +47,13 @@ class _SignupScreenState extends State<SignupScreen> {
       // 1. Create user
       final userCredential = await FirebaseAuth.instance
           .createUserWithEmailAndPassword(
-            email: _emailCtrl.text.trim(),
+            email: _emailCtrl.text.trim().toLowerCase(),
             password: _passwordCtrl.text.trim(),
           );
 
       final uid = userCredential.user!.uid;
       final name = _nameCtrl.text.trim();
-      final email = _emailCtrl.text.trim();
+      final email = _emailCtrl.text.trim().toLowerCase();
 
       // 2. Save to Firestore users collection
       await FirebaseFirestore.instance.collection('users').doc(uid).set({
@@ -145,24 +147,31 @@ class _SignupScreenState extends State<SignupScreen> {
                     keyboardType: TextInputType.emailAddress,
                     textInputAction: TextInputAction.next,
                     decoration: const InputDecoration(
-                      labelText: 'Email',
+                      labelText: 'Email (@gmail.com only)',
                       border: OutlineInputBorder(),
                     ),
-                    validator: (v) {
-                      final value = (v ?? '').trim();
-                      if (value.isEmpty) return 'Enter email';
-                      if (!value.contains('@')) return 'Enter valid email';
-                      return null;
-                    },
+                    validator: AuthValidators.validateGmailEmail,
                   ),
                   const SizedBox(height: 12),
                   TextFormField(
                     controller: _passwordCtrl,
-                    obscureText: true,
+                    obscureText: _obscurePassword,
                     textInputAction: TextInputAction.done,
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                       labelText: 'Password',
-                      border: OutlineInputBorder(),
+                      border: const OutlineInputBorder(),
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          _obscurePassword
+                              ? Icons.visibility_off
+                              : Icons.visibility,
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            _obscurePassword = !_obscurePassword;
+                          });
+                        },
+                      ),
                     ),
                     validator: (v) {
                       final value = v ?? '';
