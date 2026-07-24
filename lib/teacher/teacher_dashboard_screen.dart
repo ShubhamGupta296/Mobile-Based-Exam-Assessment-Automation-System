@@ -4,6 +4,7 @@ import '../models/attendance_model.dart';
 import '../models/student_model.dart';
 import '../models/marks_model.dart';
 import '../services/firestore_service.dart';
+import '../widgets/logout_button.dart';
 
 class TeacherDashboardScreen extends StatefulWidget {
   const TeacherDashboardScreen({super.key});
@@ -311,7 +312,10 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Teacher Dashboard')),
+      appBar: AppBar(
+        title: const Text('Teacher Dashboard'),
+        actions: const [LogoutButton()],
+      ),
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

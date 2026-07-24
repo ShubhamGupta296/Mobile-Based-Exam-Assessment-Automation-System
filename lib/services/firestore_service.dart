@@ -6,6 +6,7 @@ import '../models/department_model.dart';
 import '../models/student_model.dart';
 import '../models/subject_model.dart';
 import '../models/marks_model.dart';
+import 'subject_assignment_service.dart';
 
 /// Simple wrapper around FirebaseFirestore for common operations.
 class FirestoreService {
@@ -67,38 +68,7 @@ class FirestoreService {
   }
 
   Future<void> updateApprovalStatus(String uid, String status) async {
-    await _db.collection('users').doc(uid).update({
-      'approvalStatus': status,
-    });
-  }
-
-  Future<int> deleteAllStudents() async {
-    final snapshot = await _db.collection('students').get();
-    if (snapshot.docs.isEmpty) return 0;
-
-    final batch = _db.batch();
-    for (final doc in snapshot.docs) {
-      batch.delete(doc.reference);
-    }
-    await batch.commit();
-    return snapshot.docs.length;
-  }
-
-  Future<int> deleteUsersByRoles(List<String> roles) async {
-    if (roles.isEmpty) return 0;
-
-    final snapshot = await _db
-        .collection('users')
-        .where('role', whereIn: roles)
-        .get();
-    if (snapshot.docs.isEmpty) return 0;
-
-    final batch = _db.batch();
-    for (final doc in snapshot.docs) {
-      batch.delete(doc.reference);
-    }
-    await batch.commit();
-    return snapshot.docs.length;
+    await _db.collection('users').doc(uid).update({'approvalStatus': status});
   }
 
   /// STUDENTS COLLECTION ------------------------------------------------------
@@ -116,10 +86,7 @@ class FirestoreService {
   }
 
   Future<void> updateStudent(StudentModel student) async {
-    await _db
-        .collection('students')
-        .doc(student.id)
-        .update(student.toMap());
+    await _db.collection('students').doc(student.id).update(student.toMap());
   }
 
   Future<void> deleteStudent(String id) async {
@@ -325,6 +292,237 @@ class FirestoreService {
     for (final doc in query.docs) {
       await doc.reference.delete();
     }
+  }
+
+  /// ADMIN BACKUP / RESTORE ---------------------------------------------------
+
+  /// Create a Firestore snapshot backup of the current account, student, marks,
+  /// attendance, and config data. This is admin-only and keeps a safe copy for
+  /// later recovery.
+  Future<String> backupCurrentFirestoreSnapshot() async {
+    final users = await _db.collection('users').get();
+    final students = await _db.collection('students').get();
+    final subjects = await _db.collection('subjects').get();
+    final departments = await _db.collection('departments').get();
+    final marks = await _db.collection('marks').get();
+    final attendance = await _db.collection('attendance').get();
+    final config = await _db.collection('config').get();
+
+    final backupId = 'backup_${DateTime.now().millisecondsSinceEpoch}';
+    final snapshot = <String, dynamic>{
+      'createdAt': FieldValue.serverTimestamp(),
+      'users': users.docs
+          .map((doc) => {'__docId': doc.id, ...doc.data()})
+          .toList(),
+      'students': students.docs
+          .map((doc) => {'__docId': doc.id, ...doc.data()})
+          .toList(),
+      'subjects': subjects.docs
+          .map((doc) => {'__docId': doc.id, ...doc.data()})
+          .toList(),
+      'departments': departments.docs
+          .map((doc) => {'__docId': doc.id, ...doc.data()})
+          .toList(),
+      'marks': marks.docs
+          .map((doc) => {'__docId': doc.id, ...doc.data()})
+          .toList(),
+      'attendance': attendance.docs
+          .map((doc) => {'__docId': doc.id, ...doc.data()})
+          .toList(),
+      'config': config.docs
+          .map((doc) => {'__docId': doc.id, ...doc.data()})
+          .toList(),
+      'note': 'Automatic backup snapshot created by the admin dashboard',
+    };
+
+    await _db.collection('backups').doc(backupId).set(snapshot);
+    return backupId;
+  }
+
+  /// Restore the most recent backup snapshot into the live collections.
+  /// This preserves users, students, marks, attendance, and config data safely
+  /// by writing them back into the expected collection paths.
+  Future<int> restoreLatestBackupSnapshot() async {
+    final backupQuery = await _db
+        .collection('backups')
+        .orderBy('createdAt', descending: true)
+        .limit(1)
+        .get();
+
+    if (backupQuery.docs.isEmpty) {
+      throw Exception('No Firestore backup snapshot is available yet.');
+    }
+
+    final backupDoc = backupQuery.docs.first;
+    final data = backupDoc.data();
+    final batch = _db.batch();
+
+    final users = (data['users'] as List?) ?? const <dynamic>[];
+    final students = (data['students'] as List?) ?? const <dynamic>[];
+    final subjects = (data['subjects'] as List?) ?? const <dynamic>[];
+    final departments = (data['departments'] as List?) ?? const <dynamic>[];
+    final marks = (data['marks'] as List?) ?? const <dynamic>[];
+    final attendance = (data['attendance'] as List?) ?? const <dynamic>[];
+    final config = (data['config'] as List?) ?? const <dynamic>[];
+
+    for (final item in users) {
+      final map = Map<String, dynamic>.from(item as Map);
+      final docId =
+          map.remove('__docId') as String? ?? map['uid'] as String? ?? '';
+      batch.set(
+        _db.collection('users').doc(docId),
+        map,
+        SetOptions(merge: true),
+      );
+    }
+
+    for (final item in students) {
+      final map = Map<String, dynamic>.from(item as Map);
+      final docId =
+          map.remove('__docId') as String? ?? map['id'] as String? ?? '';
+      batch.set(
+        _db.collection('students').doc(docId),
+        map,
+        SetOptions(merge: true),
+      );
+    }
+
+    for (final item in subjects) {
+      final map = Map<String, dynamic>.from(item as Map);
+      final docId =
+          map.remove('__docId') as String? ?? map['id'] as String? ?? '';
+      batch.set(
+        _db.collection('subjects').doc(docId),
+        map,
+        SetOptions(merge: true),
+      );
+    }
+
+    for (final item in departments) {
+      final map = Map<String, dynamic>.from(item as Map);
+      final docId =
+          map.remove('__docId') as String? ?? map['id'] as String? ?? '';
+      batch.set(
+        _db.collection('departments').doc(docId),
+        map,
+        SetOptions(merge: true),
+      );
+    }
+
+    for (final item in marks) {
+      final map = Map<String, dynamic>.from(item as Map);
+      final docId = map.remove('__docId') as String? ?? '';
+      if (docId.isEmpty) {
+        batch.set(_db.collection('marks').doc(), map);
+      } else {
+        batch.set(
+          _db.collection('marks').doc(docId),
+          map,
+          SetOptions(merge: true),
+        );
+      }
+    }
+
+    for (final item in attendance) {
+      final map = Map<String, dynamic>.from(item as Map);
+      final docId = map.remove('__docId') as String? ?? '';
+      if (docId.isEmpty) {
+        batch.set(_db.collection('attendance').doc(), map);
+      } else {
+        batch.set(
+          _db.collection('attendance').doc(docId),
+          map,
+          SetOptions(merge: true),
+        );
+      }
+    }
+
+    for (final item in config) {
+      final map = Map<String, dynamic>.from(item as Map);
+      final docId = map.remove('__docId') as String? ?? '';
+      if (docId.isEmpty) {
+        batch.set(_db.collection('config').doc(), map);
+      } else {
+        batch.set(
+          _db.collection('config').doc(docId),
+          map,
+          SetOptions(merge: true),
+        );
+      }
+    }
+
+    await batch.commit();
+
+    return users.length +
+        students.length +
+        subjects.length +
+        departments.length +
+        marks.length +
+        attendance.length +
+        config.length;
+  }
+
+  /// RECOVERY / SEEDING ------------------------------------------------------
+
+  /// Rebuild the default structural collections if they were accidentally
+  /// removed. This is safe to call on app startup because it only writes the
+  /// documents needed for the application to function again.
+  Future<void> restoreDefaultCollectionStructure({
+    String branch = 'Computer Engineering',
+    String defaultTeacherId = '',
+  }) async {
+    final batch = _db.batch();
+
+    final departmentRef = _db
+        .collection('departments')
+        .doc('computer-engineering');
+    final departmentSnapshot = await departmentRef.get();
+    if (!departmentSnapshot.exists) {
+      batch.set(
+        departmentRef,
+        DepartmentModel(
+          id: 'computer-engineering',
+          name: 'Computer Engineering',
+          code: 'CE',
+          headId: defaultTeacherId,
+        ).toMap(),
+      );
+    }
+
+    final subjectsSnapshot = await _db.collection('subjects').limit(1).get();
+    if (subjectsSnapshot.docs.isEmpty) {
+      for (var year = 1; year <= 4; year++) {
+        for (var semester = 1; semester <= 2; semester++) {
+          final templates = SubjectAssignmentService.subjectsForYearSemester(
+            year,
+            semester,
+          );
+
+          for (final template in templates) {
+            final subject = SubjectModel(
+              id: template['id']!,
+              name: template['name']!,
+              code: template['code']!,
+              year: year,
+              semester: semester,
+              branch: branch,
+              teacherId: defaultTeacherId,
+            );
+
+            batch.set(
+              _db.collection('subjects').doc(subject.id),
+              subject.toMap(),
+            );
+          }
+        }
+      }
+    }
+
+    batch.set(_db.collection('config').doc('result'), <String, dynamic>{
+      'resultLocked': false,
+    }, SetOptions(merge: true));
+
+    await batch.commit();
   }
 
   /// CONFIG / SETTINGS --------------------------------------------------------

@@ -6,6 +6,7 @@ import '../models/student_model.dart';
 import '../models/subject_model.dart';
 import '../services/firestore_service.dart';
 import '../services/subject_assignment_service.dart';
+import '../widgets/logout_button.dart';
 import 'admin_analytics_screen.dart';
 
 class AdminDashboardScreen extends StatefulWidget {
@@ -117,6 +118,28 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
     }
   }
 
+  Future<void> _backupCurrentFirestoreSnapshot() async {
+    try {
+      final backupId = await _firestore.backupCurrentFirestoreSnapshot();
+      setState(() => _statusMessage = 'Backup created successfully: $backupId');
+    } catch (e) {
+      setState(() => _statusMessage = 'Backup failed: $e');
+    }
+  }
+
+  Future<void> _restoreLatestFirestoreBackup() async {
+    try {
+      final restoredCount = await _firestore.restoreLatestBackupSnapshot();
+      setState(
+        () => _statusMessage =
+            'Backup restored successfully. $restoredCount records reloaded.',
+      );
+      await _loadAll();
+    } catch (e) {
+      setState(() => _statusMessage = 'Restore failed: $e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -138,6 +161,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
         ),
         actions: [
           IconButton(icon: const Icon(Icons.refresh), onPressed: _loadAll),
+          const LogoutButton(),
         ],
       ),
       body: _loading
@@ -196,9 +220,23 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
                 const SizedBox(height: 8),
-                FilledButton(
-                  onPressed: _assignFullCurriculum,
-                  child: const Text('Assign Full CE Curriculum'),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    FilledButton(
+                      onPressed: _assignFullCurriculum,
+                      child: const Text('Assign Full CE Curriculum'),
+                    ),
+                    OutlinedButton(
+                      onPressed: _backupCurrentFirestoreSnapshot,
+                      child: const Text('Backup Current Data'),
+                    ),
+                    OutlinedButton(
+                      onPressed: _restoreLatestFirestoreBackup,
+                      child: const Text('Restore Latest Backup'),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -402,7 +440,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                 margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 child: ListTile(
                   title: Text('${d.name} (${d.code})'),
-                  subtitle: Text('Head: ${d.headId} | Students: ${d.totalStudents}'),
+                  subtitle: Text(
+                    'Head: ${d.headId} | Students: ${d.totalStudents}',
+                  ),
                   trailing: IconButton(
                     icon: const Icon(Icons.delete),
                     onPressed: () => _deleteDepartment(d.id),
@@ -486,12 +526,12 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                 'Status: ${_resultLocked ? 'Published (locked)' : 'Editable'}',
               ),
               const SizedBox(height: 16),
-              const Text(
-                'Once published, teachers cannot edit marks.',
-              ),
+              const Text('Once published, teachers cannot edit marks.'),
               const SizedBox(height: 16),
               FilledButton(
-                onPressed: _resultLocked || _isPublishing ? null : _publishResult,
+                onPressed: _resultLocked || _isPublishing
+                    ? null
+                    : _publishResult,
                 child: Text(
                   _resultLocked
                       ? 'Already Published'
@@ -521,14 +561,29 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Name')),
-            TextField(controller: rollCtrl, decoration: const InputDecoration(labelText: 'Roll No')),
-            TextField(controller: emailCtrl, decoration: const InputDecoration(labelText: 'Email')),
+            TextField(
+              controller: nameCtrl,
+              decoration: const InputDecoration(labelText: 'Name'),
+            ),
+            TextField(
+              controller: rollCtrl,
+              decoration: const InputDecoration(labelText: 'Roll No'),
+            ),
+            TextField(
+              controller: emailCtrl,
+              decoration: const InputDecoration(labelText: 'Email'),
+            ),
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Save')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Save'),
+          ),
         ],
       ),
     );
@@ -564,12 +619,29 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Name')),
-                TextField(controller: codeCtrl, decoration: const InputDecoration(labelText: 'Code (e.g. DSA101)')),
-                TextField(controller: teacherCtrl, decoration: const InputDecoration(labelText: 'Teacher UID')),
+                TextField(
+                  controller: nameCtrl,
+                  decoration: const InputDecoration(labelText: 'Name'),
+                ),
+                TextField(
+                  controller: codeCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Code (e.g. DSA101)',
+                  ),
+                ),
+                TextField(
+                  controller: teacherCtrl,
+                  decoration: const InputDecoration(labelText: 'Teacher UID'),
+                ),
                 DropdownButton<int>(
                   value: year,
-                  items: List.generate(4, (i) => DropdownMenuItem(value: i + 1, child: Text('Year ${i + 1}'))),
+                  items: List.generate(
+                    4,
+                    (i) => DropdownMenuItem(
+                      value: i + 1,
+                      child: Text('Year ${i + 1}'),
+                    ),
+                  ),
                   onChanged: (v) => setDialogState(() => year = v ?? 1),
                 ),
                 DropdownButton<int>(
@@ -584,8 +656,14 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Save')),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Save'),
+            ),
           ],
         ),
       ),
@@ -619,8 +697,14 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
           decoration: const InputDecoration(labelText: 'Teacher UID'),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Save')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Save'),
+          ),
         ],
       ),
     );
@@ -656,7 +740,13 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
             children: [
               DropdownButton<int>(
                 value: year,
-                items: List.generate(4, (i) => DropdownMenuItem(value: i + 1, child: Text('Year ${i + 1}'))),
+                items: List.generate(
+                  4,
+                  (i) => DropdownMenuItem(
+                    value: i + 1,
+                    child: Text('Year ${i + 1}'),
+                  ),
+                ),
                 onChanged: (v) => setDialogState(() => year = v ?? 1),
               ),
               DropdownButton<int>(
@@ -674,8 +764,14 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
             ],
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Assign')),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Assign'),
+            ),
           ],
         ),
       ),
@@ -688,7 +784,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
         branch: 'Computer Engineering',
         teacherId: teacherCtrl.text.trim(),
       );
-      setState(() => _statusMessage = 'Subjects assigned for Y$year S$semester');
+      setState(
+        () => _statusMessage = 'Subjects assigned for Y$year S$semester',
+      );
       await _loadAll();
     }
     teacherCtrl.dispose();
@@ -706,14 +804,29 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Name')),
-            TextField(controller: codeCtrl, decoration: const InputDecoration(labelText: 'Code')),
-            TextField(controller: headCtrl, decoration: const InputDecoration(labelText: 'Head Teacher UID')),
+            TextField(
+              controller: nameCtrl,
+              decoration: const InputDecoration(labelText: 'Name'),
+            ),
+            TextField(
+              controller: codeCtrl,
+              decoration: const InputDecoration(labelText: 'Code'),
+            ),
+            TextField(
+              controller: headCtrl,
+              decoration: const InputDecoration(labelText: 'Head Teacher UID'),
+            ),
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Save')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Save'),
+          ),
         ],
       ),
     );
