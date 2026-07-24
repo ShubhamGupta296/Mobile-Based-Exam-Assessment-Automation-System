@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../services/auth_service.dart';
-import '../services/firestore_service.dart';
 import '../widgets/auth_validators.dart';
 import '../admin/admin_dashboard_screen.dart';
 import '../teacher/teacher_dashboard_screen.dart';
@@ -21,12 +20,12 @@ class _LoginScreenState extends State<LoginScreen> {
   final _passwordCtrl = TextEditingController();
 
   bool _isLoading = false;
-  bool _isCleaning = false;
   bool _obscurePassword = true;
   String? _error;
 
-  final _authService = AuthService();
-  final _firestoreService = FirestoreService();
+  AuthService? _authService;
+
+  AuthService get _authServiceInstance => _authService ??= AuthService();
 
   @override
   void dispose() {
@@ -42,19 +41,19 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _isLoading = true);
     try {
       // 1) Sign in with Firebase Auth
-      final credential = await _authService.loginWithEmailPassword(
+      final credential = await _authServiceInstance.loginWithEmailPassword(
         email: _emailCtrl.text.trim().toLowerCase(),
         password: _passwordCtrl.text,
       );
 
       // 2) Get current user UID
-      final user = credential.user ?? _authService.currentUser;
+      final user = credential.user ?? _authServiceInstance.currentUser;
       if (user == null) {
         throw Exception('Login succeeded but no user found.');
       }
 
       // 3) Fetch user document from Firestore and read role
-      final profile = await _authService.fetchCurrentUserProfile();
+      final profile = await _authServiceInstance.fetchCurrentUserProfile();
       if (profile == null) {
         throw Exception('User profile not found.');
       }
@@ -92,40 +91,6 @@ class _LoginScreenState extends State<LoginScreen> {
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
-    }
-  }
-
-  Future<void> _cleanupOldStudentAndTeacherRecords() async {
-    if (_isCleaning) return;
-    setState(() {
-      _error = null;
-      _isCleaning = true;
-    });
-
-    try {
-      final deletedStudents = await _firestoreService.deleteAllStudents();
-      final deletedUsers = await _firestoreService.deleteUsersByRoles([
-        'student',
-        'teacher',
-      ]);
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Cleanup complete: deleted $deletedStudents student records and $deletedUsers user records.',
-          ),
-        ),
-      );
-    } catch (e) {
-      setState(() => _error = e.toString());
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Cleanup failed: $e')));
-      }
-    } finally {
-      if (mounted) setState(() => _isCleaning = false);
     }
   }
 
@@ -192,19 +157,6 @@ class _LoginScreenState extends State<LoginScreen> {
                       onPressed: _isLoading ? null : _submit,
                       child: Text(_isLoading ? 'Signing in...' : 'Login'),
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  OutlinedButton(
-                    onPressed: _isCleaning
-                        ? null
-                        : _cleanupOldStudentAndTeacherRecords,
-                    child: _isCleaning
-                        ? const SizedBox(
-                            height: 20,
-                            width: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Text('Delete old student/teacher records'),
                   ),
                   const SizedBox(height: 12),
                   TextButton(
