@@ -6,6 +6,7 @@ import '../models/marks_model.dart';
 import '../models/student_model.dart';
 import '../services/auth_service.dart';
 import '../services/firestore_service.dart';
+import '../services/subject_assignment_service.dart';
 import '../widgets/widgets.dart';
 
 class TeacherDashboardScreen extends StatefulWidget {
@@ -28,17 +29,7 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen>
     'Electronics',
   ];
 
-  static const List<String> _subjects = [
-    'DSA',
-    'OOPS',
-    'DBMS',
-    'CN',
-    'OS',
-    'TOC',
-    'COA',
-    'Software Engineering',
-    'AI',
-  ];
+  List<String> _subjects = ['DSA'];
 
   static const List<String> _divisions = ['A', 'B', 'C'];
   static const List<int> _semesters = [1, 2, 3, 4, 5, 6, 7, 8];
@@ -51,7 +42,7 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen>
   String _selectedDepartment = _departments.first;
   int _selectedSemester = 1;
   String _selectedDivision = _divisions.first;
-  String _selectedSubject = _subjects.first;
+  String _selectedSubject = 'DSA';
   DateTime _selectedDate = DateTime.now();
   int _selectedLectureNumber = 1;
 
@@ -83,7 +74,42 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen>
 
   Future<void> _initData() async {
     await _loadResultLock();
+    await _loadSubjectsForCurrentSemester();
     await _loadSectionData();
+  }
+
+  Future<void> _loadSubjectsForCurrentSemester() async {
+    final year = (_selectedSemester + 1) ~/ 2;
+    final term = _selectedSemester.isOdd ? 1 : 2;
+
+    List<String> list = [];
+    try {
+      final allSubs = await _firestoreService.getAllSubjects();
+      final matching = allSubs.where((s) {
+        final deptMatch = s.branch.trim().toLowerCase() == _selectedDepartment.trim().toLowerCase();
+        final semMatch = s.semester == _selectedSemester || (s.year == year && s.semester == term);
+        return deptMatch && semMatch;
+      }).map((s) => s.name.trim()).toList();
+
+      if (matching.isNotEmpty) {
+        list = matching.toSet().toList();
+      }
+    } catch (_) {}
+
+    if (list.isEmpty) {
+      list = SubjectAssignmentService.subjectsForSemesterNumber(
+        _selectedSemester,
+        branch: _selectedDepartment,
+      );
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _subjects = list;
+      if (!_subjects.contains(_selectedSubject)) {
+        _selectedSubject = _subjects.isNotEmpty ? _subjects.first : 'General Subject';
+      }
+    });
   }
 
   Future<void> _loadResultLock() async {
@@ -468,7 +494,7 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen>
                   onChanged: (val) {
                     if (val == null) return;
                     setState(() => _selectedDepartment = val);
-                    _loadSectionData();
+                    _loadSubjectsForCurrentSemester().then((_) => _loadSectionData());
                   },
                 ),
               ),
@@ -487,7 +513,7 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen>
                   onChanged: (val) {
                     if (val == null) return;
                     setState(() => _selectedSemester = val);
-                    _loadSectionData();
+                    _loadSubjectsForCurrentSemester().then((_) => _loadSectionData());
                   },
                 ),
               ),
@@ -517,7 +543,10 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen>
             children: [
               Expanded(
                 child: DropdownButtonFormField<String>(
-                  initialValue: _selectedSubject,
+                  key: ValueKey('subject-$_selectedDepartment-$_selectedSemester-$_selectedSubject'),
+                  initialValue: _subjects.contains(_selectedSubject)
+                      ? _selectedSubject
+                      : (_subjects.isNotEmpty ? _subjects.first : null),
                   decoration: const InputDecoration(
                     labelText: 'Subject',
                     border: OutlineInputBorder(),

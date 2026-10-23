@@ -55,6 +55,46 @@ class SubjectAssignmentService {
     return ceCurriculum['${year}_$semester'] ?? [];
   }
 
+  /// Returns subject names dynamically for semester 1-8 and department.
+  static List<String> subjectsForSemesterNumber(
+    int semester, {
+    String branch = 'Computer Engineering',
+  }) {
+    final year = (semester + 1) ~/ 2;
+    final term = semester.isOdd ? 1 : 2;
+
+    if (branch == 'Information Technology') {
+      const itCurriculum = {
+        '1_1': ['C Programming'],
+        '1_2': ['Data Structures'],
+        '2_1': ['Web Technologies', 'Java Programming'],
+        '2_2': ['Database Systems'],
+        '3_1': ['Computer Networks', 'DevOps'],
+        '3_2': ['Information Security'],
+        '4_1': ['Big Data Analytics', 'Cloud Computing'],
+        '4_2': ['Deep Learning', 'Blockchain'],
+      };
+      return itCurriculum['${year}_$term'] ?? ['IT Subject'];
+    }
+
+    if (branch == 'Electronics') {
+      const ecCurriculum = {
+        '1_1': ['Basic Electrical'],
+        '1_2': ['Electronic Devices'],
+        '2_1': ['Digital Circuits', 'Signals & Systems'],
+        '2_2': ['Microprocessors'],
+        '3_1': ['VLSI Design', 'Control Systems'],
+        '3_2': ['Embedded Systems'],
+        '4_1': ['IoT Systems', 'Wireless Communication'],
+        '4_2': ['Robotics', 'Digital Signal Processing'],
+      };
+      return ecCurriculum['${year}_$term'] ?? ['Electronics Subject'];
+    }
+
+    final list = ceCurriculum['${year}_$term'] ?? [];
+    return list.map((e) => e['name']!).toList();
+  }
+
   static List<String> allSubjectNames() {
     final names = <String>{};
     for (final entry in ceCurriculum.values) {
