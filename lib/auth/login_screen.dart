@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../models/app_user.dart';
 import '../services/auth_service.dart';
+import '../services/firestore_service.dart';
 import '../widgets/auth_validators.dart';
 import '../admin/admin_dashboard_screen.dart';
 import '../teacher/teacher_dashboard_screen.dart';
@@ -53,9 +55,20 @@ class _LoginScreenState extends State<LoginScreen> {
       }
 
       // 3) Fetch user document from Firestore and read role
-      final profile = await _authServiceInstance.fetchCurrentUserProfile();
+      var profile = await _authServiceInstance.fetchCurrentUserProfile();
+
+      // Auto-create Firestore profile if it's missing (user exists in
+      // Firebase Auth but not in the users collection).
       if (profile == null) {
-        throw Exception('User profile not found.');
+        final newProfile = UserModel(
+          uid: user.uid,
+          name: user.displayName ?? user.email?.split('@').first ?? 'User',
+          email: user.email ?? '',
+          role: 'student', // default role; admin can change later
+          approvalStatus: 'approved',
+        );
+        await FirestoreService().addUser(newProfile);
+        profile = newProfile;
       }
       if (profile.approvalStatus == 'pending') {
         throw Exception('Registration pending admin approval.');

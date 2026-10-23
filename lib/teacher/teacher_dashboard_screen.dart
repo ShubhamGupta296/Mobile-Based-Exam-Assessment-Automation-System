@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 
 import '../models/attendance_model.dart';
-import '../models/student_model.dart';
+import '../models/daily_attendance_model.dart';
 import '../models/marks_model.dart';
+import '../models/student_model.dart';
 import '../services/firestore_service.dart';
+import '../widgets/attendance_health_badge.dart';
+import '../widgets/lecture_history_widget.dart';
 import '../widgets/logout_button.dart';
 
 class TeacherDashboardScreen extends StatefulWidget {
@@ -13,7 +16,19 @@ class TeacherDashboardScreen extends StatefulWidget {
   State<TeacherDashboardScreen> createState() => _TeacherDashboardScreenState();
 }
 
-class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
+class _TeacherDashboardScreenState extends State<TeacherDashboardScreen>
+    with SingleTickerProviderStateMixin {
+  static const _monthNames = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+  ];
+
+  static const List<String> _departments = [
+    'Computer Engineering',
+    'Information Technology',
+    'Electronics',
+  ];
+
   static const List<String> _subjects = [
     'DSA',
     'OOPS',
@@ -26,42 +41,61 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
     'AI',
   ];
 
+  static const List<String> _divisions = ['A', 'B', 'C'];
+  static const List<int> _semesters = [1, 2, 3, 4, 5, 6, 7, 8];
+
   final _firestoreService = FirestoreService();
 
+  late TabController _tabController;
+
+  // Filter Selection State
+  String _selectedDepartment = _departments.first;
+  int _selectedSemester = 1;
+  String _selectedDivision = _divisions.first;
+  String _selectedSubject = _subjects.first;
+  DateTime _selectedDate = DateTime.now();
+  int _selectedLectureNumber = 1;
+
   bool _isLoadingStudents = true;
+  bool _isSavingAttendance = false;
   bool _resultLocked = false;
   bool _isTogglingLock = false;
   String? _loadError;
-  List<StudentModel> _students = [];
 
+  List<StudentModel> _students = [];
+  List<DailyAttendanceModel> _recentLectures = [];
+
+  // Checkbox State for Attendance
+  final Map<String, bool> _attendanceCheckbox = {};
+
+  // Marks Form Controllers
   final Map<String, TextEditingController> _internalCtrls = {};
   final Map<String, TextEditingController> _externalCtrls = {};
   final Map<String, TextEditingController> _remarkCtrls = {};
-  final Map<String, TextEditingController> _presentCtrls = {};
-  final Map<String, TextEditingController> _totalClassCtrls = {};
   final Map<String, int> _totals = {};
-  final Map<String, double> _attendancePercent = {};
-  final Map<String, String> _selectedSubject = {};
+  final Map<String, AttendanceModel> _attendanceSummaries = {};
 
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 2, vsync: this);
     _initData();
   }
 
   Future<void> _initData() async {
     await _loadResultLock();
-    await _loadStudents();
+    await _loadSectionData();
   }
 
   Future<void> _loadResultLock() async {
     final locked = await _firestoreService.isResultLocked();
+    if (!mounted) return;
     setState(() {
       _resultLocked = locked;
     });
   }
 
-  Future<void> _loadStudents() async {
+  Future<void> _loadSectionData() async {
     setState(() {
       _isLoadingStudents = true;
       _loadError = null;
@@ -69,60 +103,81 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
 
     try {
       final snapshot = await _firestoreService.db.collection('students').get();
-      final students = snapshot.docs
+      final allStudents = snapshot.docs
           .map((doc) => StudentModel.fromMap(doc.data()))
-          .toList(growable: false);
+          .toList();
 
-      for (final s in students) {
-        _internalCtrls[s.id] = TextEditingController();
-        _externalCtrls[s.id] = TextEditingController();
-        _remarkCtrls[s.id] = TextEditingController();
-        _presentCtrls[s.id] = TextEditingController();
-        _totalClassCtrls[s.id] = TextEditingController();
+      // Filter students by Department/Branch, Semester, Division
+      final filtered = allStudents.where((s) {
+        final matchesBranch = s.branch == _selectedDepartment ||
+            _selectedDepartment == 'Computer Engineering';
+        final matchesSem = s.semester == _selectedSemester;
+        final matchesDiv = s.division == _selectedDivision;
+        return matchesBranch && matchesSem && matchesDiv;
+      }).toList();
+
+      // If no exact section match, fallback to semester match
+      final targetStudents = filtered.isNotEmpty
+          ? filtered
+          : allStudents
+              .where((s) => s.semester == _selectedSemester)
+              .toList();
+
+      _students = targetStudents.isNotEmpty ? targetStudents : allStudents;
+
+      // Initialize Controllers and Checkboxes
+      for (final s in _students) {
+        _attendanceCheckbox[s.id] = true; // Default Present
+        _internalCtrls[s.id] ??= TextEditingController();
+        _externalCtrls[s.id] ??= TextEditingController();
+        _remarkCtrls[s.id] ??= TextEditingController();
         _totals[s.id] = 0;
-        _attendancePercent[s.id] = 0.0;
-        _selectedSubject[s.id] = _subjects.first;
 
-        await _loadStudentSubjectData(
-          s.id,
-          _subjects.first,
-          s.year,
-          s.semester,
-        );
+        await _loadStudentMarksAndSummary(s.id);
       }
 
+      // Load Recent Lectures History
+      final lectures = await _firestoreService.getRecentLectures(
+        subjectId: _selectedSubject,
+        semester: _selectedSemester,
+        division: _selectedDivision,
+        limit: 5,
+      );
+
+      if (!mounted) return;
       setState(() {
-        _students = students;
+        _recentLectures = lectures;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _loadError = e.toString();
       });
     } finally {
-      setState(() {
-        _isLoadingStudents = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoadingStudents = false;
+        });
+      }
     }
   }
 
-  Future<void> _loadStudentSubjectData(
-    String studentId,
-    String subjectId,
-    int year,
-    int semester,
-  ) async {
+  Future<void> _loadStudentMarksAndSummary(String studentId) async {
+    final year = (_selectedSemester + 1) ~/ 2;
+
     final marks = await _firestoreService.getMarksByStudentAndSubject(
       studentId,
-      subjectId,
+      _selectedSubject,
     );
 
-    final attendance = await _firestoreService.getAttendanceByStudentAndSubject(
+    final summary = await _firestoreService.getAttendanceByStudentAndSubject(
       studentId,
-      subjectId,
+      _selectedSubject,
       year,
-      semester,
+      _selectedSemester,
     );
 
+    if (!mounted) return;
     setState(() {
       if (marks != null) {
         _internalCtrls[studentId]?.text = marks.internal.toString();
@@ -136,16 +191,80 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
         _totals[studentId] = 0;
       }
 
-      if (attendance != null) {
-        _presentCtrls[studentId]?.text = attendance.presentClasses.toString();
-        _totalClassCtrls[studentId]?.text = attendance.totalClasses.toString();
-        _attendancePercent[studentId] = attendance.percentage;
+      if (summary != null) {
+        _attendanceSummaries[studentId] = summary;
       } else {
-        _presentCtrls[studentId]?.clear();
-        _totalClassCtrls[studentId]?.clear();
-        _attendancePercent[studentId] = 0.0;
+        _attendanceSummaries[studentId] = AttendanceModel(
+          studentId: studentId,
+          subjectId: _selectedSubject,
+          year: year,
+          semester: _selectedSemester,
+        );
       }
     });
+  }
+
+  void _markAll(bool present) {
+    setState(() {
+      for (final s in _students) {
+        _attendanceCheckbox[s.id] = present;
+      }
+    });
+  }
+
+  Future<void> _saveDailyAttendance() async {
+    if (_isSavingAttendance) return;
+
+    final year = (_selectedSemester + 1) ~/ 2;
+    final presentIds = <String>[];
+    final absentIds = <String>[];
+
+    for (final student in _students) {
+      final isPresent = _attendanceCheckbox[student.id] ?? true;
+      if (isPresent) {
+        presentIds.add(student.id);
+      } else {
+        absentIds.add(student.id);
+      }
+    }
+
+    final dailyRecord = DailyAttendanceModel(
+      department: _selectedDepartment,
+      year: year,
+      semester: _selectedSemester,
+      division: _selectedDivision,
+      subjectId: _selectedSubject,
+      date: _selectedDate,
+      lectureNumber: _selectedLectureNumber,
+      presentStudentIds: presentIds,
+      absentStudentIds: absentIds,
+    );
+
+    setState(() => _isSavingAttendance = true);
+
+    try {
+      await _firestoreService.saveDailyAttendance(dailyRecord);
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Saved Lecture $_selectedLectureNumber attendance for $_selectedSubject (Div $_selectedDivision)',
+          ),
+          backgroundColor: Colors.green.shade700,
+        ),
+      );
+
+      // Reload updated section summaries & lecture history
+      await _loadSectionData();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error saving attendance: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _isSavingAttendance = false);
+    }
   }
 
   void _recalculateTotal(String studentId) {
@@ -155,14 +274,6 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
     final external = int.tryParse(externalText) ?? 0;
     setState(() {
       _totals[studentId] = internal + external;
-    });
-  }
-
-  void _recalculateAttendancePercent(String studentId) {
-    final present = int.tryParse(_presentCtrls[studentId]?.text ?? '') ?? 0;
-    final total = int.tryParse(_totalClassCtrls[studentId]?.text ?? '') ?? 0;
-    setState(() {
-      _attendancePercent[studentId] = total > 0 ? (present / total) * 100 : 0.0;
     });
   }
 
@@ -176,30 +287,16 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
       return;
     }
 
-    final selectedSubject = _selectedSubject[student.id] ?? _subjects.first;
     final internalText = _internalCtrls[student.id]?.text ?? '';
     final externalText = _externalCtrls[student.id]?.text ?? '';
     final remarkText = _remarkCtrls[student.id]?.text ?? '';
-    final presentText = _presentCtrls[student.id]?.text ?? '';
-    final totalClassesText = _totalClassCtrls[student.id]?.text ?? '';
 
     final internal = int.tryParse(internalText);
     final external = int.tryParse(externalText);
-    final presentClasses = int.tryParse(presentText) ?? 0;
-    final totalClasses = int.tryParse(totalClassesText) ?? 0;
 
     if (internal == null || external == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please enter valid marks (numbers).')),
-      );
-      return;
-    }
-
-    if (presentClasses > totalClasses) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Present classes cannot exceed total classes.'),
-        ),
       );
       return;
     }
@@ -209,11 +306,13 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
     final gradePoint = MarksModel.calculateGradePoint(total);
     final grade = MarksModel.getGrade(total);
 
+    final year = (_selectedSemester + 1) ~/ 2;
+
     final marks = MarksModel(
       studentId: student.id,
-      subjectId: selectedSubject,
-      year: student.year,
-      semester: student.semester,
+      subjectId: _selectedSubject,
+      year: year,
+      semester: _selectedSemester,
       internal: internal,
       external: external,
       total: total,
@@ -223,41 +322,24 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
       remark: remarkText,
     );
 
-    final attendance = AttendanceModel(
-      studentId: student.id,
-      subjectId: selectedSubject,
-      year: student.year,
-      semester: student.semester,
-      presentClasses: presentClasses,
-      totalClasses: totalClasses,
-    );
-
     try {
       await _firestoreService.updateMarksByStudentAndSubject(
         student.id,
-        selectedSubject,
+        _selectedSubject,
         marks,
       );
-      await _firestoreService.addOrUpdateAttendanceSummary(attendance);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Saved $selectedSubject data for ${student.name}'),
+          content: Text('Saved $_selectedSubject marks for ${student.name}'),
         ),
       );
-      await _loadStudentSubjectData(
-        student.id,
-        selectedSubject,
-        student.year,
-        student.semester,
-      );
-      if (!mounted) return;
-      setState(() {});
+      await _loadStudentMarksAndSummary(student.id);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error saving data: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error saving marks: $e')),
+      );
     }
   }
 
@@ -281,9 +363,9 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error toggling lock: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error toggling lock: $e')),
+      );
     } finally {
       if (mounted) setState(() => _isTogglingLock = false);
     }
@@ -291,6 +373,7 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
 
   @override
   void dispose() {
+    _tabController.dispose();
     for (final c in _internalCtrls.values) {
       c.dispose();
     }
@@ -298,12 +381,6 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
       c.dispose();
     }
     for (final c in _remarkCtrls.values) {
-      c.dispose();
-    }
-    for (final c in _presentCtrls.values) {
-      c.dispose();
-    }
-    for (final c in _totalClassCtrls.values) {
       c.dispose();
     }
     super.dispose();
@@ -315,11 +392,279 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
       appBar: AppBar(
         title: const Text('Teacher Dashboard'),
         actions: const [LogoutButton()],
+        bottom: TabBar(
+          controller: _tabController,
+          tabs: const [
+            Tab(icon: Icon(Icons.check_box_outlined), text: 'Daily Attendance'),
+            Tab(icon: Icon(Icons.grade_outlined), text: 'Subject Marks'),
+          ],
+        ),
       ),
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Padding(
+          _buildFilterHeader(),
+          const Divider(height: 1),
+          Expanded(
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                _buildAttendanceTab(),
+                _buildMarksTab(),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFilterHeader() {
+    final monthStr = _monthNames[(_selectedDate.month - 1).clamp(0, 11)];
+    final dateStr = '$monthStr ${_selectedDate.day.toString().padLeft(2, '0')}, ${_selectedDate.year}';
+
+    return Container(
+      color: Theme.of(context).colorScheme.surfaceContainerLow,
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  initialValue: _selectedDepartment,
+                  decoration: const InputDecoration(
+                    labelText: 'Department',
+                    border: OutlineInputBorder(),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  ),
+                  items: _departments
+                      .map((d) => DropdownMenuItem(value: d, child: Text(d, overflow: TextOverflow.ellipsis)))
+                      .toList(),
+                  onChanged: (val) {
+                    if (val == null) return;
+                    setState(() => _selectedDepartment = val);
+                    _loadSectionData();
+                  },
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: DropdownButtonFormField<int>(
+                  initialValue: _selectedSemester,
+                  decoration: const InputDecoration(
+                    labelText: 'Semester',
+                    border: OutlineInputBorder(),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  ),
+                  items: _semesters
+                      .map((s) => DropdownMenuItem(value: s, child: Text('Sem $s')))
+                      .toList(),
+                  onChanged: (val) {
+                    if (val == null) return;
+                    setState(() => _selectedSemester = val);
+                    _loadSectionData();
+                  },
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  initialValue: _selectedDivision,
+                  decoration: const InputDecoration(
+                    labelText: 'Division',
+                    border: OutlineInputBorder(),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  ),
+                  items: _divisions
+                      .map((div) => DropdownMenuItem(value: div, child: Text('Div $div')))
+                      .toList(),
+                  onChanged: (val) {
+                    if (val == null) return;
+                    setState(() => _selectedDivision = val);
+                    _loadSectionData();
+                  },
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  initialValue: _selectedSubject,
+                  decoration: const InputDecoration(
+                    labelText: 'Subject',
+                    border: OutlineInputBorder(),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  ),
+                  items: _subjects
+                      .map((sub) => DropdownMenuItem(value: sub, child: Text(sub)))
+                      .toList(),
+                  onChanged: (val) {
+                    if (val == null) return;
+                    setState(() => _selectedSubject = val);
+                    _loadSectionData();
+                  },
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                  ),
+                  icon: const Icon(Icons.calendar_month, size: 18),
+                  label: Text(dateStr, style: const TextStyle(fontSize: 12)),
+                  onPressed: () async {
+                    final picked = await showDatePicker(
+                      context: context,
+                      initialDate: _selectedDate,
+                      firstDate: DateTime(2020),
+                      lastDate: DateTime.now().add(const Duration(days: 1)),
+                    );
+                    if (picked != null) {
+                      setState(() => _selectedDate = picked);
+                    }
+                  },
+                ),
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                flex: 1,
+                child: DropdownButtonFormField<int>(
+                  initialValue: _selectedLectureNumber,
+                  decoration: const InputDecoration(
+                    labelText: 'Lec #',
+                    border: OutlineInputBorder(),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  ),
+                  items: List.generate(10, (i) => i + 1)
+                      .map((lecNum) => DropdownMenuItem(value: lecNum, child: Text('Lec $lecNum')))
+                      .toList(),
+                  onChanged: (val) {
+                    if (val == null) return;
+                    setState(() => _selectedLectureNumber = val);
+                  },
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAttendanceTab() {
+    if (_isLoadingStudents) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_loadError != null) {
+      return Center(child: Text('Error: $_loadError'));
+    }
+    if (_students.isEmpty) {
+      return const Center(child: Text('No students found for selected section.'));
+    }
+
+    final presentCount = _attendanceCheckbox.values.where((v) => v).length;
+
+    return ListView(
+      padding: const EdgeInsets.all(12),
+      children: [
+        LectureHistoryWidget(
+          lectures: _recentLectures,
+          onRefresh: _loadSectionData,
+        ),
+        const SizedBox(height: 8),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Present: $presentCount / ${_students.length}',
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+                ),
+                Row(
+                  children: [
+                    TextButton.icon(
+                      icon: const Icon(Icons.check_box, size: 18),
+                      label: const Text('Mark All'),
+                      onPressed: () => _markAll(true),
+                    ),
+                    TextButton.icon(
+                      icon: const Icon(Icons.check_box_outline_blank, size: 18),
+                      label: const Text('Clear All'),
+                      onPressed: () => _markAll(false),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        ..._students.map((student) {
+          final isPresent = _attendanceCheckbox[student.id] ?? true;
+          final summary = _attendanceSummaries[student.id];
+          final pct = summary?.percentage ?? 0.0;
+
+          return Card(
+            margin: const EdgeInsets.symmetric(vertical: 4),
+            child: CheckboxListTile(
+              value: isPresent,
+              onChanged: (val) {
+                setState(() {
+                  _attendanceCheckbox[student.id] = val ?? false;
+                });
+              },
+              title: Text(
+                student.name,
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              subtitle: Text(
+                'Roll: ${student.rollNo} • Cumulative: ${summary?.presentClasses ?? 0}/${summary?.totalClasses ?? 0} classes',
+              ),
+              secondary: AttendanceHealthBadge(percentage: pct),
+            ),
+          );
+        }),
+        const SizedBox(height: 16),
+        FilledButton.icon(
+          style: FilledButton.styleFrom(padding: const EdgeInsets.all(16)),
+          icon: _isSavingAttendance
+              ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+              : const Icon(Icons.save),
+          label: Text(
+            _isSavingAttendance
+                ? 'Saving Attendance...'
+                : 'Save Lecture $_selectedLectureNumber Attendance',
+            style: const TextStyle(fontSize: 16),
+          ),
+          onPressed: _isSavingAttendance ? null : _saveDailyAttendance,
+        ),
+        const SizedBox(height: 24),
+      ],
+    );
+  }
+
+  Widget _buildMarksTab() {
+    if (_isLoadingStudents) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_students.isEmpty) {
+      return const Center(child: Text('No students found for selected section.'));
+    }
+
+    return ListView(
+      padding: const EdgeInsets.all(12),
+      children: [
+        Card(
+          child: Padding(
             padding: const EdgeInsets.all(12),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -327,9 +672,12 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
                 Expanded(
                   child: Text(
                     _resultLocked
-                        ? 'Result is published. Marks are locked.'
-                        : 'Result not published. Marks are editable.',
-                    style: Theme.of(context).textTheme.bodyMedium,
+                        ? 'Results Published. Marks Locked.'
+                        : 'Results Open. Marks Editable.',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: _resultLocked ? Colors.red.shade700 : Colors.green.shade700,
+                    ),
                   ),
                 ),
                 FilledButton.tonal(
@@ -339,177 +687,94 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
               ],
             ),
           ),
-          const Divider(height: 1),
-          Expanded(child: _buildBody()),
-        ],
-      ),
-    );
-  }
+        ),
+        const SizedBox(height: 8),
+        ..._students.map((student) {
+          final internalCtrl = _internalCtrls[student.id]!;
+          final externalCtrl = _externalCtrls[student.id]!;
+          final remarkCtrl = _remarkCtrls[student.id]!;
+          final total = _totals[student.id] ?? 0;
+          final summary = _attendanceSummaries[student.id];
 
-  Widget _buildBody() {
-    if (_isLoadingStudents) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    if (_loadError != null) {
-      return Center(child: Text('Error: $_loadError'));
-    }
-    if (_students.isEmpty) {
-      return const Center(child: Text('No students found.'));
-    }
-
-    return ListView.builder(
-      padding: const EdgeInsets.all(12),
-      itemCount: _students.length,
-      itemBuilder: (context, index) {
-        final student = _students[index];
-        final internalCtrl = _internalCtrls[student.id]!;
-        final externalCtrl = _externalCtrls[student.id]!;
-        final remarkCtrl = _remarkCtrls[student.id]!;
-        final total = _totals[student.id] ?? 0;
-
-        return Card(
-          margin: const EdgeInsets.symmetric(vertical: 8),
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  student.name,
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 4),
-                Text('Roll No: ${student.rollNo}'),
-                const SizedBox(height: 4),
-                Text('Year ${student.year}, Semester ${student.semester}'),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: DropdownButtonFormField<String>(
-                        initialValue: _selectedSubject[student.id],
-                        decoration: const InputDecoration(
-                          labelText: 'Subject',
-                          border: OutlineInputBorder(),
-                        ),
-                        items: _subjects
-                            .map(
-                              (subject) => DropdownMenuItem(
-                                value: subject,
-                                child: Text(subject),
-                              ),
-                            )
-                            .toList(),
-                        onChanged: _resultLocked
-                            ? null
-                            : (value) async {
-                                final subject = value ?? _subjects.first;
-                                setState(() {
-                                  _selectedSubject[student.id] = subject;
-                                });
-                                await _loadStudentSubjectData(
-                                  student.id,
-                                  subject,
-                                  student.year,
-                                  student.semester,
-                                );
-                              },
+          return Card(
+            margin: const EdgeInsets.symmetric(vertical: 8),
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        student.name,
+                        style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
                       ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: internalCtrl,
-                        enabled: !_resultLocked,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
-                          labelText: 'Internal',
-                          border: OutlineInputBorder(),
-                        ),
-                        onChanged: (_) => _recalculateTotal(student.id),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: TextField(
-                        controller: externalCtrl,
-                        enabled: !_resultLocked,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
-                          labelText: 'External',
-                          border: OutlineInputBorder(),
-                        ),
-                        onChanged: (_) => _recalculateTotal(student.id),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _presentCtrls[student.id],
-                        enabled: !_resultLocked,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
-                          labelText: 'Present Classes',
-                          border: OutlineInputBorder(),
-                        ),
-                        onChanged: (_) =>
-                            _recalculateAttendancePercent(student.id),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: TextField(
-                        controller: _totalClassCtrls[student.id],
-                        enabled: !_resultLocked,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
-                          labelText: 'Total Classes',
-                          border: OutlineInputBorder(),
-                        ),
-                        onChanged: (_) =>
-                            _recalculateAttendancePercent(student.id),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Attendance: ${_attendancePercent[student.id]?.toStringAsFixed(1) ?? '0.0'}%',
-                ),
-                const SizedBox(height: 8),
-                Text('Total Marks: $total'),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: remarkCtrl,
-                  enabled: !_resultLocked,
-                  decoration: const InputDecoration(
-                    labelText: 'Remark (optional)',
-                    border: OutlineInputBorder(),
+                      if (summary != null)
+                        AttendanceHealthBadge(percentage: summary.percentage),
+                    ],
                   ),
-                ),
-                const SizedBox(height: 12),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: FilledButton(
-                    onPressed: _resultLocked
-                        ? null
-                        : () => _saveMarksForStudent(student),
-                    child: const Text('Save Subject Data'),
+                  Text('Roll No: ${student.rollNo} • Div ${student.division}'),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: internalCtrl,
+                          enabled: !_resultLocked,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(
+                            labelText: 'Internal Marks (/30)',
+                            border: OutlineInputBorder(),
+                          ),
+                          onChanged: (_) => _recalculateTotal(student.id),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: TextField(
+                          controller: externalCtrl,
+                          enabled: !_resultLocked,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(
+                            labelText: 'External Marks (/70)',
+                            border: OutlineInputBorder(),
+                          ),
+                          onChanged: (_) => _recalculateTotal(student.id),
+                        ),
+                      ),
+                    ],
                   ),
-                ),
-              ],
+                  const SizedBox(height: 8),
+                  Text(
+                    'Total Marks: $total / 100',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: remarkCtrl,
+                    enabled: !_resultLocked,
+                    decoration: const InputDecoration(
+                      labelText: 'Remark (optional)',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: FilledButton(
+                      onPressed: _resultLocked
+                          ? null
+                          : () => _saveMarksForStudent(student),
+                      child: Text('Save $_selectedSubject Marks'),
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-        );
-      },
+          );
+        }),
+      ],
     );
   }
 }

@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 
 import '../models/attendance_model.dart';
+import '../models/daily_attendance_model.dart';
 import '../models/marks_model.dart';
 import '../models/student_model.dart';
 import '../services/auth_service.dart';
 import '../services/erp_service.dart';
 import '../services/firestore_service.dart';
+import '../widgets/attendance_health_badge.dart';
 import '../widgets/logout_button.dart';
 
 class StudentDashboardScreen extends StatefulWidget {
@@ -25,6 +27,7 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
   StudentModel? _student;
   List<MarksModel> _marks = const [];
   List<AttendanceModel> _attendance = const [];
+  List<DailyAttendanceModel> _dailyLogs = const [];
   double _semesterGpa = 0.0;
   double _cgpa = 0.0;
   double _attendanceAverage = 0.0;
@@ -48,6 +51,7 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
           _error = 'Not logged in.';
           _marks = const [];
           _attendance = const [];
+          _dailyLogs = const [];
           _student = null;
         });
         return;
@@ -59,6 +63,7 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
           _error = 'Student record not found.';
           _marks = const [];
           _attendance = const [];
+          _dailyLogs = const [];
         });
         return;
       }
@@ -67,6 +72,10 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
       final attendance = await _firestoreService.getAttendanceByStudent(
         user.uid,
       );
+      final dailyLogs = await _firestoreService.getDailyAttendanceByStudent(
+        user.uid,
+      );
+
       final semesterGpa = await _erpService.calculateSemesterGPA(
         user.uid,
         student.year,
@@ -80,24 +89,30 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
             student.semester,
           );
 
+      if (!mounted) return;
       setState(() {
         _student = student;
         _marks = marks;
         _attendance = attendance;
+        _dailyLogs = dailyLogs;
         _semesterGpa = semesterGpa;
         _cgpa = cgpa;
         _attendanceAverage = attendanceAverage;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _error = e.toString();
         _marks = const [];
         _attendance = const [];
+        _dailyLogs = const [];
       });
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -140,27 +155,56 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    _student!.name,
-                    style: Theme.of(context).textTheme.titleLarge,
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        _student!.name,
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+                      ),
+                      AttendanceHealthBadge(percentage: _attendanceAverage),
+                    ],
                   ),
                   const SizedBox(height: 8),
                   Text('Email: ${_student!.email}'),
-                  Text('Roll No: ${_student!.rollNo}'),
+                  Text('Roll No: ${_student!.rollNo} • Div ${_student!.division}'),
                   Text(
-                    'Year ${_student!.year}, Semester ${_student!.semester}',
+                    'Year ${_student!.year}, Semester ${_student!.semester} (${_student!.branch})',
                   ),
-                  Text('Batch: ${_student!.batch}'),
                 ],
               ),
             ),
           ),
+          if (_attendanceAverage < 75.0 && _attendance.isNotEmpty)
+            Card(
+              color: Colors.red.shade50,
+              margin: const EdgeInsets.symmetric(vertical: 4),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Row(
+                  children: [
+                    Icon(Icons.warning_amber_rounded, color: Colors.red.shade700),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Low Attendance Warning: Your overall attendance is ${_attendanceAverage.toStringAsFixed(1)}%. Minimum 75% required for exam eligibility.',
+                        style: TextStyle(
+                          color: Colors.red.shade900,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           const SizedBox(height: 12),
           _buildPerformanceSummary(),
           const SizedBox(height: 12),
           Text(
-            'Subject-wise Breakdown',
-            style: Theme.of(context).textTheme.titleMedium,
+            'Subject Breakdown & Attendance History',
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
           if (subjects.isEmpty)
@@ -181,15 +225,15 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Academic Performance',
-              style: Theme.of(context).textTheme.titleMedium,
+              'Academic Performance Summary',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 12),
             _buildStatRow('Semester GPA', _semesterGpa, maxValue: 10),
             const SizedBox(height: 8),
             _buildStatRow('CGPA', _cgpa, maxValue: 10),
             const SizedBox(height: 8),
-            _buildStatRow('Attendance Avg', _attendanceAverage, maxValue: 100),
+            _buildStatRow('Overall Attendance Avg', _attendanceAverage, maxValue: 100),
           ],
         ),
       ),
@@ -226,37 +270,80 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
           AttendanceModel(studentId: _student!.id, subjectId: subjectId),
     );
 
+    final subjectDailyLogs = _dailyLogs.where((l) => l.subjectId == subjectId).toList();
+
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 8),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(subjectId, style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 8),
-            Text('Internal: ${mark.internal}'),
-            Text('External: ${mark.external}'),
-            Text('Total Marks: ${mark.total}'),
-            Text('Percentage: ${mark.percentage.toStringAsFixed(1)}%'),
-            Text('Grade: ${mark.grade}'),
-            if (mark.remark.isNotEmpty) ...[
-              const SizedBox(height: 4),
-              Text('Remark: ${mark.remark}'),
-            ],
-            const SizedBox(height: 12),
-            Text(
-              'Attendance: ${attendance.presentClasses}/${attendance.totalClasses}',
-            ),
-            Text('Attendance %: ${attendance.percentage.toStringAsFixed(1)}%'),
-            const SizedBox(height: 12),
-            _buildStatRow(
-              'Subject Attendance',
-              attendance.percentage,
-              maxValue: 100,
-            ),
-          ],
+      child: ExpansionTile(
+        title: Text(subjectId, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+        subtitle: Text(
+          'Total Marks: ${mark.total} • Grade: ${mark.grade} • Attendance: ${attendance.percentage.toStringAsFixed(1)}%',
         ),
+        trailing: AttendanceHealthBadge(percentage: attendance.percentage),
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('Internal Marks: ${mark.internal}/30'),
+                    Text('External Marks: ${mark.external}/70'),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text('Grade Point: ${mark.gradePoint}'),
+                if (mark.remark.isNotEmpty) Text('Remark: ${mark.remark}'),
+                const Divider(height: 16),
+                Text(
+                  'Classes Attended: ${attendance.presentClasses} / ${attendance.totalClasses}',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                _buildStatRow('Subject Attendance', attendance.percentage, maxValue: 100),
+                const SizedBox(height: 12),
+                Text(
+                  'Recent Lecture Log:',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 6),
+                if (subjectDailyLogs.isEmpty)
+                  const Text('No individual lecture logs recorded yet.')
+                else
+                  Column(
+                    children: subjectDailyLogs.take(5).map((log) {
+                      final isPresent = log.presentStudentIds.contains(_student!.id);
+                      final dateStr = '${log.date.day}/${log.date.month}/${log.date.year}';
+                      return Container(
+                        margin: const EdgeInsets.symmetric(vertical: 2),
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: isPresent ? Colors.green.shade50 : Colors.red.shade50,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text('Lec ${log.lectureNumber} • $dateStr', style: const TextStyle(fontSize: 12)),
+                            Text(
+                              isPresent ? 'PRESENT' : 'ABSENT',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: isPresent ? Colors.green.shade800 : Colors.red.shade800,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }).toList(),
+                  ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -332,11 +332,28 @@ class AnalyticsService {
     for (var sem = 1; sem <= 8; sem++) {
       final semMarks = allMarks.where((m) => m.semester == sem).toList();
       if (semMarks.isEmpty) continue;
-      final avgGp =
-          semMarks.map((m) => m.gradePoint).reduce((a, b) => a + b) /
-              semMarks.length;
-      gpaTrend.add(TrendPoint(label: 'Sem $sem', value: avgGp));
-      cgpaTrend.add(TrendPoint(label: 'Sem $sem', value: avgGp));
+
+      // ISE (internal) grade point average
+      final iseMarks = semMarks.where((m) => m.internal > 0).toList();
+      if (iseMarks.isNotEmpty) {
+        final iseGp = iseMarks
+                .map((m) => MarksModel.calculateGradePoint(m.internal * 100 ~/ 40))
+                .reduce((a, b) => a + b) /
+            iseMarks.length;
+        gpaTrend.add(TrendPoint(label: 'S$sem ISE', value: iseGp));
+        cgpaTrend.add(TrendPoint(label: 'S$sem ISE', value: iseGp));
+      }
+
+      // ESE (external) grade point average
+      final eseMarks = semMarks.where((m) => m.external > 0).toList();
+      if (eseMarks.isNotEmpty) {
+        final eseGp = eseMarks
+                .map((m) => MarksModel.calculateGradePoint(m.external * 100 ~/ 60))
+                .reduce((a, b) => a + b) /
+            eseMarks.length;
+        gpaTrend.add(TrendPoint(label: 'S$sem ESE', value: eseGp));
+        cgpaTrend.add(TrendPoint(label: 'S$sem ESE', value: eseGp));
+      }
     }
 
     final attTrend = <TrendPoint>[];

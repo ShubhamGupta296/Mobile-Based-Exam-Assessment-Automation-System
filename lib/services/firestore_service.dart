@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/app_user.dart';
 import '../models/attendance_model.dart';
+import '../models/daily_attendance_model.dart';
 import '../models/department_model.dart';
 import '../models/student_model.dart';
 import '../models/subject_model.dart';
@@ -259,6 +260,127 @@ class FirestoreService {
     } else {
       await _db.collection('attendance').add(attendance.toMap());
     }
+  }
+
+  /// DAILY LECTURE ATTENDANCE -------------------------------------------------
+
+  /// Saves a lecture attendance session and auto-recomputes aggregate
+  /// attendance summaries in the `attendance` collection.
+  Future<void> saveDailyAttendance(DailyAttendanceModel daily) async {
+    final docRef = _db.collection('daily_attendance').doc();
+    final modelToSave = DailyAttendanceModel(
+      id: docRef.id,
+      department: daily.department,
+      year: daily.year,
+      semester: daily.semester,
+      division: daily.division,
+      subjectId: daily.subjectId,
+      teacherId: daily.teacherId,
+      date: daily.date,
+      lectureNumber: daily.lectureNumber,
+      presentStudentIds: daily.presentStudentIds,
+      absentStudentIds: daily.absentStudentIds,
+      totalStudents: daily.totalStudents,
+      createdAt: daily.createdAt,
+    );
+
+    await docRef.set(modelToSave.toMap());
+
+    // Auto-recalculate aggregate summaries for all affected students
+    await recalculateStudentAttendanceSummaries(
+      subjectId: daily.subjectId,
+      year: daily.year,
+      semester: daily.semester,
+      division: daily.division,
+    );
+  }
+
+  /// Re-computes cumulative `presentClasses` & `totalClasses` for students
+  /// from all stored daily lectures for a subject/semester/division.
+  Future<void> recalculateStudentAttendanceSummaries({
+    required String subjectId,
+    required int year,
+    required int semester,
+    required String division,
+  }) async {
+    final snap = await _db
+        .collection('daily_attendance')
+        .where('subjectId', isEqualTo: subjectId)
+        .where('semester', isEqualTo: semester)
+        .where('division', isEqualTo: division)
+        .get();
+
+    final lectures = snap.docs
+        .map((doc) => DailyAttendanceModel.fromMap(doc.data(), docId: doc.id))
+        .toList();
+
+    if (lectures.isEmpty) return;
+
+    final totalClasses = lectures.length;
+    final Map<String, int> presentCounts = {};
+
+    for (final lecture in lectures) {
+      for (final studentId in lecture.presentStudentIds) {
+        presentCounts[studentId] = (presentCounts[studentId] ?? 0) + 1;
+      }
+      for (final studentId in lecture.absentStudentIds) {
+        presentCounts.putIfAbsent(studentId, () => 0);
+      }
+    }
+
+    for (final entry in presentCounts.entries) {
+      final studentId = entry.key;
+      final presentClasses = entry.value;
+      final summary = AttendanceModel(
+        studentId: studentId,
+        subjectId: subjectId,
+        year: year,
+        semester: semester,
+        presentClasses: presentClasses,
+        totalClasses: totalClasses,
+      );
+      await addOrUpdateAttendanceSummary(summary);
+    }
+  }
+
+  /// Fetches the last N lectures recorded for a specific subject & section.
+  Future<List<DailyAttendanceModel>> getRecentLectures({
+    required String subjectId,
+    required int semester,
+    String division = 'A',
+    int limit = 5,
+  }) async {
+    final snap = await _db
+        .collection('daily_attendance')
+        .where('subjectId', isEqualTo: subjectId)
+        .where('semester', isEqualTo: semester)
+        .where('division', isEqualTo: division)
+        .get();
+
+    final list = snap.docs
+        .map((doc) => DailyAttendanceModel.fromMap(doc.data(), docId: doc.id))
+        .toList();
+
+    list.sort((a, b) => b.date.compareTo(a.date));
+    return list.take(limit).toList();
+  }
+
+  /// Fetches all daily attendance records where student was marked present or absent.
+  Future<List<DailyAttendanceModel>> getDailyAttendanceByStudent(
+    String studentId,
+  ) async {
+    final snap = await _db.collection('daily_attendance').get();
+    final list = snap.docs
+        .map((doc) => DailyAttendanceModel.fromMap(doc.data(), docId: doc.id))
+        .where(
+          (log) =>
+              log.presentStudentIds.contains(studentId) ||
+              log.absentStudentIds.contains(studentId),
+        )
+        .toList();
+
+    list.sort((a, b) => b.date.compareTo(a.date));
+    return list;
   }
 
   Future<void> updateMarksByStudentAndSubject(

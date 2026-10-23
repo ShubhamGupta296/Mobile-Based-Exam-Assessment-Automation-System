@@ -21,6 +21,7 @@ class StudentModel {
   final int semester; // 1-8
   final String branch; // Computer Engineering
   final int batch;
+  final String division; // Division A, B, C
   final double gpa;
   final double cgpa;
   final String status; // active, inactive, graduated
@@ -34,6 +35,7 @@ class StudentModel {
     this.year = 1,
     this.semester = 1,
     this.branch = 'Computer Engineering',
+    this.division = 'A',
     this.batch = 2024,
     this.gpa = 0.0,
     this.cgpa = 0.0,
@@ -50,6 +52,7 @@ class StudentModel {
       year: (map['year'] as int?) ?? 1,
       semester: (map['semester'] as int?) ?? 1,
       branch: (map['branch'] as String?) ?? 'Computer Engineering',
+      division: (map['division'] as String?) ?? 'A',
       batch: (map['batch'] as int?) ?? 2024,
       gpa: (map['gpa'] as num?)?.toDouble() ?? 0.0,
       cgpa: (map['cgpa'] as num?)?.toDouble() ?? 0.0,
@@ -69,6 +72,7 @@ class StudentModel {
       'year': year,
       'semester': semester,
       'branch': branch,
+      'division': division,
       'batch': batch,
       'gpa': gpa,
       'cgpa': cgpa,
@@ -85,6 +89,7 @@ class StudentModel {
     int? year,
     int? semester,
     String? branch,
+    String? division,
     int? batch,
     double? gpa,
     double? cgpa,
@@ -98,6 +103,7 @@ class StudentModel {
       year: year ?? this.year,
       semester: semester ?? this.semester,
       branch: branch ?? this.branch,
+      division: division ?? this.division,
       batch: batch ?? this.batch,
       gpa: gpa ?? this.gpa,
       cgpa: cgpa ?? this.cgpa,

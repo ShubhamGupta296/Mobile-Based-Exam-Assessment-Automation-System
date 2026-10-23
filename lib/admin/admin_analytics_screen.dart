@@ -155,6 +155,8 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
     if (points.isEmpty) {
       return const Center(child: Text('No data'));
     }
+    // Show every label if few points, otherwise show every 2nd label
+    final interval = points.length > 10 ? 2.0 : 1.0;
     return LineChart(
       LineChartData(
         gridData: const FlGridData(show: true),
@@ -162,12 +164,18 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
           bottomTitles: AxisTitles(
             sideTitles: SideTitles(
               showTitles: true,
+              reservedSize: 40,
+              interval: interval,
               getTitlesWidget: (value, meta) {
                 final i = value.toInt();
                 if (i < 0 || i >= points.length) return const SizedBox();
-                return Text(
-                  points[i].label,
-                  style: const TextStyle(fontSize: 10),
+                return SideTitleWidget(
+                  meta: meta,
+                  angle: -0.5,
+                  child: Text(
+                    points[i].label,
+                    style: const TextStyle(fontSize: 9),
+                  ),
                 );
               },
             ),
