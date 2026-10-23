@@ -8,3 +8,4 @@ export 'firestore_service.dart';
 export 'erp_service.dart';
 export 'subject_assignment_service.dart';
 export 'analytics_service.dart';
+export 'pdf_report_service.dart';

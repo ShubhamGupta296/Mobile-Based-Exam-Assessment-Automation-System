@@ -6,7 +6,9 @@ import '../models/student_model.dart';
 import '../models/subject_model.dart';
 import '../services/firestore_service.dart';
 import '../services/subject_assignment_service.dart';
-import '../widgets/logout_button.dart';
+import '../services/erp_service.dart';
+import '../services/pdf_report_service.dart';
+import '../widgets/widgets.dart';
 import 'admin_analytics_screen.dart';
 
 class AdminDashboardScreen extends StatefulWidget {
@@ -160,6 +162,16 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
           ],
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.warning_amber_rounded, color: Colors.amberAccent),
+            tooltip: 'Attendance Defaulters (<75%)',
+            onPressed: () => DefaulterListDialog.show(context),
+          ),
+          IconButton(
+            icon: const Icon(Icons.history_edu),
+            tooltip: 'Audit Logs',
+            onPressed: () => AuditLogViewerDialog.show(context),
+          ),
           IconButton(icon: const Icon(Icons.refresh), onPressed: _loadAll),
           const LogoutButton(),
         ],
@@ -301,9 +313,25 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                 child: ListTile(
                   title: Text(s.name),
                   subtitle: Text(
-                    'Roll: ${s.rollNo} | Y${s.year} S${s.semester} | ${s.branch}',
+                    'Roll: ${s.rollNo} • Div ${s.division} | Y${s.year} S${s.semester} | ${s.branch}',
                   ),
-                  trailing: Text(s.status),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.picture_as_pdf, color: Colors.indigo),
+                        tooltip: 'Print Student Grade Card',
+                        onPressed: () => _printStudentGradeCard(s),
+                      ),
+                      Text(
+                        s.status,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: s.status == 'active' ? Colors.green.shade700 : Colors.grey,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               );
             },
@@ -311,9 +339,27 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
         ),
         Padding(
           padding: const EdgeInsets.all(12),
-          child: FilledButton(
-            onPressed: _showAddStudentDialog,
-            child: const Text('Add Student'),
+          child: Row(
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: _showAddStudentDialog,
+                  icon: const Icon(Icons.person_add),
+                  label: const Text('Add Student'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () async {
+                    await BulkCsvImportDialog.showStudentsImport(context);
+                    await _loadAll();
+                  },
+                  icon: const Icon(Icons.table_view),
+                  label: const Text('Bulk CSV Import'),
+                ),
+              ),
+            ],
           ),
         ),
       ],
@@ -389,6 +435,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      IconButton(
+                        icon: const Icon(Icons.person_pin, color: Colors.indigo),
+                        tooltip: 'Assign Teacher',
+                        onPressed: () => _showAssignTeacherDialog(s),
+                      ),
                       IconButton(
                         icon: const Icon(Icons.edit),
                         onPressed: () => _showEditSubjectDialog(s),
@@ -849,5 +900,92 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
   Future<void> _deleteDepartment(String id) async {
     await _firestore.deleteDepartment(id);
     await _loadAll();
+  }
+
+  Future<void> _printStudentGradeCard(StudentModel student) async {
+    try {
+      final marks = await _firestore.getMarksByStudent(student.id);
+      final attendance = await _firestore.getAttendanceByStudent(student.id);
+      final erp = ERPService();
+      final semesterGpa = await erp.calculateSemesterGPA(
+        student.id,
+        student.year,
+        student.semester,
+      );
+      final cgpa = await erp.calculateCGPA(student.id, student.semester);
+      final avgAtt = attendance.isEmpty
+          ? 0.0
+          : attendance.map((a) => a.percentage).reduce((a, b) => a + b) / attendance.length;
+
+      await PdfReportService.printStudentGradeCard(
+        student: student,
+        marks: marks,
+        attendance: attendance,
+        semesterGpa: semesterGpa,
+        cgpa: cgpa,
+        attendanceAverage: avgAtt,
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to generate PDF: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _showAssignTeacherDialog(SubjectModel subject) async {
+    String selectedTeacherId = subject.teacherId;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDlgState) {
+          return AlertDialog(
+            title: Text('Assign Teacher for ${subject.name}'),
+            content: DropdownButtonFormField<String>(
+              initialValue: _teachers.any((t) => t.uid == selectedTeacherId) ? selectedTeacherId : null,
+              decoration: const InputDecoration(
+                labelText: 'Select Teacher',
+                border: OutlineInputBorder(),
+              ),
+              items: _teachers.map((t) {
+                return DropdownMenuItem(
+                  value: t.uid,
+                  child: Text('${t.name} (${t.email})'),
+                );
+              }).toList(),
+              onChanged: (val) {
+                if (val != null) {
+                  setDlgState(() => selectedTeacherId = val);
+                }
+              },
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Assign'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    if (confirmed == true && selectedTeacherId.isNotEmpty) {
+      await _firestore.assignSubjectTeacher(
+        subjectId: subject.id,
+        teacherId: selectedTeacherId,
+      );
+      await _loadAll();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Assigned teacher to ${subject.name}')),
+        );
+      }
+    }
   }
 }

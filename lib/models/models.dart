@@ -12,3 +12,4 @@ export 'daily_attendance_model.dart';
 export 'performance_model.dart';
 export 'department_model.dart';
 export 'notification_model.dart';
+export 'audit_log_model.dart';

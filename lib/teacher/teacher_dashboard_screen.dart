@@ -4,10 +4,9 @@ import '../models/attendance_model.dart';
 import '../models/daily_attendance_model.dart';
 import '../models/marks_model.dart';
 import '../models/student_model.dart';
+import '../services/auth_service.dart';
 import '../services/firestore_service.dart';
-import '../widgets/attendance_health_badge.dart';
-import '../widgets/lecture_history_widget.dart';
-import '../widgets/logout_button.dart';
+import '../widgets/widgets.dart';
 
 class TeacherDashboardScreen extends StatefulWidget {
   const TeacherDashboardScreen({super.key});
@@ -323,15 +322,22 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen>
     );
 
     try {
-      await _firestoreService.updateMarksByStudentAndSubject(
-        student.id,
-        _selectedSubject,
-        marks,
+      final user = AuthService().currentUser;
+      final teacherIdentifier = user?.email ?? user?.uid ?? 'Teacher';
+
+      await _firestoreService.updateMarksWithAudit(
+        studentId: student.id,
+        subjectId: _selectedSubject,
+        updatedMarks: marks,
+        performedBy: teacherIdentifier,
+        role: 'teacher',
+        studentRollNo: student.rollNo,
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Saved $_selectedSubject marks for ${student.name}'),
+          content: Text('Saved $_selectedSubject marks for ${student.name} with audit log'),
+          backgroundColor: Colors.green.shade700,
         ),
       );
       await _loadStudentMarksAndSummary(student.id);
@@ -391,7 +397,24 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen>
     return Scaffold(
       appBar: AppBar(
         title: const Text('Teacher Dashboard'),
-        actions: const [LogoutButton()],
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.warning_amber_rounded, color: Colors.amberAccent),
+            tooltip: 'Defaulters List (<75%)',
+            onPressed: () => DefaulterListDialog.show(
+              context,
+              department: _selectedDepartment,
+              semester: _selectedSemester,
+              division: _selectedDivision,
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Refresh',
+            onPressed: _loadSectionData,
+          ),
+          const LogoutButton(),
+        ],
         bottom: TabBar(
           controller: _tabController,
           tabs: const [
@@ -666,23 +689,46 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen>
         Card(
           child: Padding(
             padding: const EdgeInsets.all(12),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                Expanded(
-                  child: Text(
-                    _resultLocked
-                        ? 'Results Published. Marks Locked.'
-                        : 'Results Open. Marks Editable.',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: _resultLocked ? Colors.red.shade700 : Colors.green.shade700,
-                    ),
+                Text(
+                  _resultLocked
+                      ? 'Results Published. Marks Locked.'
+                      : 'Results Open. Marks Editable.',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: _resultLocked ? Colors.red.shade700 : Colors.green.shade700,
                   ),
                 ),
-                FilledButton.tonal(
-                  onPressed: _isTogglingLock ? null : _toggleResultLock,
-                  child: Text(_resultLocked ? 'Unlock Marks' : 'Lock Marks'),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: _resultLocked
+                          ? null
+                          : () async {
+                              final user = AuthService().currentUser;
+                              await BulkCsvImportDialog.showMarksImport(
+                                context,
+                                subjectId: _selectedSubject,
+                                semester: _selectedSemester,
+                                teacherUidOrEmail: user?.email ?? user?.uid ?? 'Teacher',
+                              );
+                              await _loadSectionData();
+                            },
+                      icon: const Icon(Icons.table_view, size: 18),
+                      label: const Text('Bulk CSV Marks'),
+                    ),
+                    const SizedBox(width: 8),
+                    FilledButton.tonal(
+                      onPressed: _isTogglingLock ? null : _toggleResultLock,
+                      child: Text(_resultLocked ? 'Unlock Marks' : 'Lock Marks'),
+                    ),
+                  ],
                 ),
               ],
             ),

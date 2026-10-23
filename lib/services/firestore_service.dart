@@ -7,6 +7,7 @@ import '../models/department_model.dart';
 import '../models/student_model.dart';
 import '../models/subject_model.dart';
 import '../models/marks_model.dart';
+import '../models/audit_log_model.dart';
 import 'subject_assignment_service.dart';
 
 /// Simple wrapper around FirebaseFirestore for common operations.
@@ -669,5 +670,166 @@ class FirestoreService {
   Future<void> toggleResultLock() async {
     final currentLock = await isResultLocked();
     await setResultLocked(!currentLock);
+  }
+
+  /// AUDIT LOGGING ------------------------------------------------------------
+
+  /// Record an audit log for sensitive data operations.
+  Future<void> recordAuditLog(AuditLogModel log) async {
+    final docRef = _db.collection('audit_logs').doc();
+    final modelToSave = AuditLogModel(
+      id: docRef.id,
+      action: log.action,
+      performedBy: log.performedBy,
+      role: log.role,
+      studentId: log.studentId,
+      studentRollNo: log.studentRollNo,
+      subjectId: log.subjectId,
+      details: log.details,
+      timestamp: log.timestamp,
+    );
+    await docRef.set(modelToSave.toMap());
+  }
+
+  /// Fetch recent audit log records.
+  Future<List<AuditLogModel>> getAuditLogs({int limit = 50}) async {
+    final snap = await _db
+        .collection('audit_logs')
+        .orderBy('timestamp', descending: true)
+        .limit(limit)
+        .get();
+
+    return snap.docs
+        .map((d) => AuditLogModel.fromMap(d.data(), docId: d.id))
+        .toList();
+  }
+
+  /// Update marks while generating an audit log record with diff.
+  Future<void> updateMarksWithAudit({
+    required String studentId,
+    required String subjectId,
+    required MarksModel updatedMarks,
+    required String performedBy,
+    String role = 'teacher',
+    String studentRollNo = '',
+  }) async {
+    // 1) Check existing mark to record diff
+    final query = await _db
+        .collection('marks')
+        .where('studentId', isEqualTo: studentId)
+        .where('subjectId', isEqualTo: subjectId)
+        .get();
+
+    Map<String, dynamic> auditDetails = {
+      'newInternal': updatedMarks.internal,
+      'newExternal': updatedMarks.external,
+      'newTotal': updatedMarks.total,
+      'newGrade': updatedMarks.grade,
+      'remark': updatedMarks.remark,
+    };
+
+    if (query.docs.isNotEmpty) {
+      final oldMark = MarksModel.fromMap(query.docs.first.data());
+      auditDetails['previousInternal'] = oldMark.internal;
+      auditDetails['previousExternal'] = oldMark.external;
+      auditDetails['previousTotal'] = oldMark.total;
+      auditDetails['previousGrade'] = oldMark.grade;
+      await query.docs.first.reference.update(updatedMarks.toMap());
+    } else {
+      auditDetails['isFirstEntry'] = true;
+      await addMarks(updatedMarks);
+    }
+
+    // 2) Record the audit log entry
+    await recordAuditLog(
+      AuditLogModel(
+        action: query.docs.isNotEmpty ? 'UPDATE_MARKS' : 'NEW_MARKS_RECORDED',
+        performedBy: performedBy,
+        role: role,
+        studentId: studentId,
+        studentRollNo: studentRollNo,
+        subjectId: subjectId,
+        details: auditDetails,
+      ),
+    );
+  }
+
+  /// ATTENDANCE DEFAULTERS QUERY ----------------------------------------------
+
+  /// Retrieves students whose overall attendance in a cohort is below [threshold] (default 75%).
+  Future<List<Map<String, dynamic>>> getDefaulters({
+    String? department,
+    int? semester,
+    String? division,
+    double threshold = 75.0,
+  }) async {
+    final allStudents = await getAllStudents();
+    final filtered = allStudents.where((s) {
+      if (department != null && s.branch != department) return false;
+      if (semester != null && s.semester != semester) return false;
+      if (division != null && s.division != division) return false;
+      return true;
+    }).toList();
+
+    final List<Map<String, dynamic>> defaulters = [];
+
+    for (final student in filtered) {
+      final attList = await getAttendanceByStudent(student.id);
+      if (attList.isEmpty) continue;
+
+      final totalAttended = attList.fold<int>(0, (acc, a) => acc + a.presentClasses);
+      final totalConducted = attList.fold<int>(0, (acc, a) => acc + a.totalClasses);
+
+      if (totalConducted == 0) continue;
+
+      final overallPercentage = (totalAttended / totalConducted) * 100;
+      if (overallPercentage < threshold) {
+        // Shortage calculation: (0.75 * T - A) / 0.25 = 3T - 4A
+        final shortage = ((0.75 * totalConducted) - totalAttended) / (1 - 0.75);
+        final shortageInt = shortage > 0 ? shortage.ceil() : 1;
+
+        defaulters.add({
+          'student': student,
+          'studentId': student.id,
+          'name': student.name,
+          'rollNo': student.rollNo,
+          'branch': student.branch,
+          'semester': student.semester,
+          'division': student.division,
+          'attended': totalAttended,
+          'total': totalConducted,
+          'percentage': overallPercentage,
+          'shortage': shortageInt,
+        });
+      }
+    }
+
+    // Sort by lowest attendance first
+    defaulters.sort((a, b) => (a['percentage'] as double).compareTo(b['percentage'] as double));
+    return defaulters;
+  }
+
+  /// SUBJECT TEACHER ALLOCATION ----------------------------------------------
+
+  /// Assign a teacher to a subject.
+  Future<void> assignSubjectTeacher({
+    required String subjectId,
+    required String teacherId,
+  }) async {
+    await _db.collection('subjects').doc(subjectId).update({
+      'teacherId': teacherId,
+    });
+  }
+
+  /// Fetch subjects assigned to a specific teacher.
+  Future<List<SubjectModel>> getSubjectsByTeacher(String teacherId) async {
+    final snap = await _db
+        .collection('subjects')
+        .where('teacherId', isEqualTo: teacherId)
+        .get();
+
+    return snap.docs
+        .map((d) => SubjectModel.fromMap(d.data()))
+        .toList();
   }
 }

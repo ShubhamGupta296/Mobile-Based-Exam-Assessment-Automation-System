@@ -159,6 +159,8 @@ Traditional exam assessment processes in colleges are often manual and time-cons
 | `subjects` | id, name, code, year, semester, teacherId | Subject catalog |
 | `marks` | studentId, subjectId, internal, external, total, grade | Exam marks |
 | `attendance` | studentId, subjectId, presentClasses, totalClasses | Attendance records |
+| `daily_attendance` | id, subjectId, date, lectureNumber, presentStudentIds, absentStudentIds | Daily lecture attendance sessions |
+| `audit_logs` | id, action, performedBy, role, studentRollNo, subjectId, details, timestamp | Academic modification audit logs |
 | `departments` | id, name, code, headId | Department management |
 | `notifications` | recipientId, title, message, isRead | System alerts |
 | `config/result` | resultLocked | Result publish status |
@@ -171,13 +173,14 @@ Traditional exam assessment processes in colleges are often manual and time-cons
 lib/
 ├── admin/              Admin dashboard & analytics screens
 ├── auth/               Login & signup screens
-├── models/             Data models (User, Student, Subject, Marks, etc.)
+├── models/             Data models (User, Student, Subject, Marks, DailyAttendance, AuditLog, etc.)
 ├── services/           Business logic & Firebase operations
 │   ├── auth_service.dart
 │   ├── firestore_service.dart
 │   ├── erp_service.dart
 │   ├── subject_assignment_service.dart
-│   └── analytics_service.dart
+│   ├── analytics_service.dart
+│   └── pdf_report_service.dart
 ├── student/            Student dashboard
 ├── teacher/            Teacher dashboard
 ├── screens/            App entry & routing screens

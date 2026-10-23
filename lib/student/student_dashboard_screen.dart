@@ -7,6 +7,7 @@ import '../models/student_model.dart';
 import '../services/auth_service.dart';
 import '../services/erp_service.dart';
 import '../services/firestore_service.dart';
+import '../services/pdf_report_service.dart';
 import '../widgets/attendance_health_badge.dart';
 import '../widgets/logout_button.dart';
 
@@ -116,12 +117,39 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
     }
   }
 
+  Future<void> _downloadGradeCard() async {
+    if (_student == null) return;
+    try {
+      await PdfReportService.printStudentGradeCard(
+        student: _student!,
+        marks: _marks,
+        attendance: _attendance,
+        semesterGpa: _semesterGpa,
+        cgpa: _cgpa,
+        attendanceAverage: _attendanceAverage,
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to generate PDF: $e')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Student Dashboard'),
-        actions: const [LogoutButton()],
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.picture_as_pdf),
+            tooltip: 'Download Grade Card',
+            onPressed: _student == null ? null : _downloadGradeCard,
+          ),
+          const LogoutButton(),
+        ],
       ),
       body: _buildBody(),
     );
@@ -234,6 +262,15 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
             _buildStatRow('CGPA', _cgpa, maxValue: 10),
             const SizedBox(height: 8),
             _buildStatRow('Overall Attendance Avg', _attendanceAverage, maxValue: 100),
+            const SizedBox(height: 14),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.tonalIcon(
+                onPressed: _downloadGradeCard,
+                icon: const Icon(Icons.picture_as_pdf),
+                label: const Text('Download Official Grade Card / Marksheet'),
+              ),
+            ),
           ],
         ),
       ),
